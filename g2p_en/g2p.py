@@ -145,50 +145,73 @@ class G2p(object):
         preds = [self.idx2p.get(idx, "<unk>") for idx in preds]
         return preds
 
-    def __call__(self, text):
+    def grouped(self, texts):
+        """For a list of lists of words, expand each word list into list of phonemes separated by spaces."""
         # preprocessing
-        text = unicode(text)
-        text = normalize_numbers(text)
-        text = ''.join(char for char in unicodedata.normalize('NFD', text)
+        texts = [unicode(text) for text in texts]
+        texts = [''.join(char for char in unicodedata.normalize('NFD', text)
                        if unicodedata.category(char) != 'Mn')  # Strip accents
-        text = text.lower()
-        text = re.sub("[^ a-z'.,?!\-]", "", text)
-        text = text.replace("i.e.", "that is")
-        text = text.replace("e.g.", "for example")
+                    for text in texts]
+        texts = [text.lower() for text in texts]
+        texts = [re.sub("[^ a-z'.,?!-]", "", text) for text in texts]
+        # # tokenization
+        words = [word_tokenize(text) for text in texts] # list of lists of tokens
+        tokens = pos_tag([x for ws in words for x in ws])  # list of tuples of (word, tag)
+        # print(words) # [['you'], ['wind'], ['a'], ['bobbin'], ['but'], ['the'], ['wind'], ['blows', '.']]
+        # print(tokens) # [('you', 'PRP'), ('wind', 'VBP'), ('a', 'DT'), ('bobbin', 'NN'), ('but', 'CC'), ('the', 'DT'), ('wind', 'NN'), ('blows', 'VBZ'), ('.', '.')]
 
-        # tokenization
-        words = word_tokenize(text)
-        tokens = pos_tag(words)  # tuples of (word, tag)
+        # Now we need to group tokens back into words structure.
+        nested = [[tokens.pop(0) for _ in ws] for ws in words]
+        # print(nested) # [[('you', 'PRP')], [('wind', 'VBP')], [('a', 'DT')], [('bobbin', 'NN')], [('but', 'CC')], [('the', 'DT')], [('wind', 'NN')], [('blows', 'VBZ'), ('.', '.')]]
 
         # steps
-        prons = []
-        for word, pos in tokens:
-            if re.search("[a-z]", word) is None:
-                pron = [word]
+        pronslst = []
+        for outer in nested:
+            prons = []
+            for word, pos in outer:
+                if re.search("[a-z]", word) is None:
+                    pron = [word]
 
-            elif word in self.homograph2features:  # Check homograph
-                pron1, pron2, pos1 = self.homograph2features[word]
-                if pos.startswith(pos1):
-                    pron = pron1
-                else:
-                    pron = pron2
-            elif word in self.cmu:  # lookup CMU dict
-                pron = self.cmu[word][0]
-            else: # predict for oov
-                pron = self.predict(word)
+                elif word in self.homograph2features:  # Check homograph
+                    pron1, pron2, pos1 = self.homograph2features[word]
+                    if pos.startswith(pos1):
+                        pron = pron1
+                    else:
+                        pron = pron2
+                elif word in self.cmu:  # lookup CMU dict
+                    pron = self.cmu[word][0]
+                else: # predict for oov
+                    pron = self.predict(word)
 
-            prons.extend(pron)
-            prons.extend([" "])
+                if len(prons) > 0:
+                    prons.append(' ')
+                prons.extend(pron)
+            pronslst.append(prons)
 
-        return prons[:-1]
+        return pronslst
+
+    def __call__(self, text, expand=True):
+        """Return list of phonemes for single string."""
+        if expand:
+            text = unicode(text)
+            text = normalize_numbers(text)
+            text = text.replace("i.e.", "that is")
+            text = text.replace("e.g.", "for example")
+        result = self.grouped([text])
+        return result[0]
 
 if __name__ == '__main__':
     texts = ["I have $250 in my pocket.", # number -> spell-out
              "popular pets, e.g. cats and dogs", # e.g. -> for example
              "I refuse to collect the refuse around here.", # homograph
              "I'm an activationist."] # newly coined word
+    grouped = [[["You"], ["wind"], ["a"], ["bobbin"], ["but"], ["the"], ["wind"], ["blows."]],
+               [["I'm"], ["an"], ["anti", "activationist."]]]
+
     g2p = G2p()
     for text in texts:
         out = g2p(text)
         print(out)
-
+    for group in grouped:
+        out = g2p.grouped(group)
+        print(out)
